@@ -10,7 +10,7 @@ Built during my internship at Elevate Labs.
 
 - Parses Apache and SSH log files
 - Detects brute force login attempts on SSH
-- Flags IPs with unusually high request counts (DoS pattern)
+- Flags IPs with unusually high request counts within the analyzed log file (threshold-based on total volume, not time-windowed — so a burst of requests in seconds and the same count spread over a week are both flagged the same way)
 - Checks all IPs against a blacklist
 - Generates a color-coded bar chart of top accessing IPs
 - Saves a timestamped incident report
@@ -27,10 +27,11 @@ Built during my internship at Elevate Labs.
 ├── logs/
 │   ├── apache.log
 │   └── ssh.log
-├── graphs/
+├── graphs/ 
 │   └── access.png     # generated after running
 └── report.txt         # generated after running
 ```
+Note: the chart plots Apache/web traffic only — SSH brute-force activity is captured in the report but not the graph.
 
 ---
 
