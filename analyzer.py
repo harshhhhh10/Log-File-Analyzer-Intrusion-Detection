@@ -6,7 +6,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.ticker import MaxNLocator
-from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -79,15 +78,34 @@ def resolve_files(args):
 # ---------------- PARSING LOGIC ----------------
 
 def parse_ssh(files):
-    pattern = r'Failed password for .*? from (\d+\.\d+\.\d+\.\d+)'
-    ips = []
+    pattern = (
+        r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}).*"
+        r"Failed password for .*? from (\d+\.\d+\.\d+\.\d+)"
+    )
+    events = []
+
     for file in files:
         with open(file) as f:
             for line in f:
-                m = re.search(pattern, line)
-                if m:
-                    ips.append(m.group(1))
-    return ips
+                match = re.search(pattern, line)
+
+                if match:
+                    # Extract the timestamp and IP from the matched log line
+                    timestamp_text = match.group(1)
+                    ip = match.group(2)
+
+                    # SSH logs have no year, so use 2000 as a placeholder
+                    timestamp = datetime.strptime(
+                        f"2000 {timestamp_text}",
+                        "%Y %b %d %H:%M:%S"
+                    )
+
+                    events.append({
+                        "ip": ip,
+                        "time": timestamp
+                    })
+
+    return events
 
 def parse_apache(files):
     pattern = r'^(\d+\.\d+\.\d+\.\d+) - - \[(.*?)\] "(.*?)" (\d+)'
@@ -102,9 +120,41 @@ def parse_apache(files):
 
 # ---------------- DETECTION ENGINES ----------------
 
-def detect_bruteforce(ip_list):
-    counts = Counter(ip_list)
-    return [(ip, n) for ip, n in counts.items() if n >= BF_LIMIT]
+def detect_bruteforce(events, window_seconds=60):
+    events_by_ip = {}
+
+    # Group timestamps by IP address
+    for event in events:
+        ip = event["ip"]
+        timestamp = event["time"]
+
+        if ip not in events_by_ip:
+            events_by_ip[ip] = []
+
+        events_by_ip[ip].append(timestamp)
+
+    alerts = []
+
+    # Examine each IP separately
+    for ip, timestamps in events_by_ip.items():
+        timestamps.sort()
+
+        window_start = 0
+        max_attempts = 0
+
+        for window_end in range(len(timestamps)):
+            while (
+                timestamps[window_end] - timestamps[window_start]
+            ).total_seconds() > window_seconds:
+                window_start += 1
+
+            attempts_in_window = window_end - window_start + 1
+            max_attempts = max(max_attempts, attempts_in_window)
+
+        if max_attempts >= BF_LIMIT:
+            alerts.append((ip, max_attempts))
+
+    return alerts
 
 def detect_dos(data):
     if not data:
@@ -168,6 +218,7 @@ def save_report(bf, dos, bad):
 
 def main():
     args = parse_args()
+
     apache_files, ssh_files = resolve_files(args)
 
     apache_data = parse_apache(apache_files)
@@ -176,14 +227,31 @@ def main():
     bf_alerts = detect_bruteforce(ssh_data)
     dos_alerts = detect_dos(apache_data)
 
+    # Extract plain IP strings before blacklist checking
+    ssh_ips = [event["ip"] for event in ssh_data]
+    apache_ips = [row[0] for row in apache_data]
+    all_seen_ips = ssh_ips + apache_ips
+
     blacklist = load_blacklist()
-    all_seen_ips = ssh_data + [row[0] for row in apache_data]
     blacklisted_found = check_blacklist(all_seen_ips, blacklist)
 
     if not args.no_graph:
-        plot_ips(apache_data, blacklist, set(i for i, _ in bf_alerts), set(dos_alerts.index))
+        bf_ips = {ip for ip, attempts in bf_alerts}
+        dos_ips = set(dos_alerts.index)
 
-    save_report(bf_alerts, dos_alerts, blacklisted_found)
+        plot_ips(
+            apache_data,
+            blacklist,
+            bf_ips,
+            dos_ips
+        )
+
+    save_report(
+        bf_alerts,
+        dos_alerts,
+        blacklisted_found
+    )
+
 
 if __name__ == "__main__":
     main()
