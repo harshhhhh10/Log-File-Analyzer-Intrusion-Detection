@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.ticker import MaxNLocator
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path 
 
 # Configuration setup
 with open("config.json") as f:
