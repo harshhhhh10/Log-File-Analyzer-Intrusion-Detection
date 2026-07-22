@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.ticker import MaxNLocator
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path 
 
 # Configuration setup
 with open("config.json") as f:
@@ -110,12 +110,25 @@ def parse_ssh(files):
 def parse_apache(files):
     pattern = r'^(\d+\.\d+\.\d+\.\d+) - - \[(.*?)\] "(.*?)" (\d+)'
     data = []
+
     for file in files:
         with open(file) as f:
             for line in f:
-                m = re.search(pattern, line)
-                if m:
-                    data.append([m.group(1), m.group(2), m.group(3), m.group(4)])
+                match = re.search(pattern, line)
+
+                if match:
+                    timestamp = datetime.strptime(
+                        match.group(2),
+                        "%d/%b/%Y:%H:%M:%S %z"
+                    )
+
+                    data.append([
+                        match.group(1),
+                        timestamp,
+                        match.group(3),
+                        match.group(4),
+                    ])
+
     return data
 
 # ---------------- DETECTION ENGINES ----------------
@@ -156,12 +169,39 @@ def detect_bruteforce(events, window_seconds=60):
 
     return alerts
 
-def detect_dos(data):
+def detect_dos(data, window_seconds=60):
     if not data:
         return pd.Series(dtype=int)
-    df = pd.DataFrame(data, columns=["ip", "time", "req", "status"])
-    count = df["ip"].value_counts()
-    return count[count >= DOS_LIMIT]
+
+    timestamps_by_ip = {}
+
+    for ip, timestamp, request, status in data:
+        if ip not in timestamps_by_ip:
+            timestamps_by_ip[ip] = []
+
+        timestamps_by_ip[ip].append(timestamp)
+
+    alerts = {}
+
+    for ip, timestamps in timestamps_by_ip.items():
+        timestamps.sort()
+
+        window_start = 0
+        max_requests = 0
+
+        for window_end in range(len(timestamps)):
+            while (
+                timestamps[window_end] - timestamps[window_start]
+            ).total_seconds() > window_seconds:
+                window_start += 1
+
+            requests_in_window = window_end - window_start + 1
+            max_requests = max(max_requests, requests_in_window)
+
+        if max_requests >= DOS_LIMIT:
+            alerts[ip] = max_requests
+
+    return pd.Series(alerts, dtype=int).sort_values(ascending=False)
 
 # ---------------- THREAT INTELLIGENCE ----------------
 
