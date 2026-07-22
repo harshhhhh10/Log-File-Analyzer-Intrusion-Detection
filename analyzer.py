@@ -86,19 +86,26 @@ def parse_ssh(files):
 
     for file in files:
         with open(file) as f:
-            for line in f:
+            for line_number, line in enumerate(f, start=1):
                 match = re.search(pattern, line)
 
                 if match:
-                    # Extract the timestamp and IP from the matched log line
                     timestamp_text = match.group(1)
                     ip = match.group(2)
 
-                    # SSH logs have no year, so use 2000 as a placeholder
-                    timestamp = datetime.strptime(
-                        f"2000 {timestamp_text}",
-                        "%Y %b %d %H:%M:%S"
-                    )
+                    try:
+                        timestamp = datetime.strptime(
+                            f"2000 {timestamp_text}",
+                            "%Y %b %d %H:%M:%S"
+                        )
+                    except ValueError:
+                        print(
+                            f"[!] Skipping invalid SSH timestamp "
+                            f"in {file} at line {line_number}: "
+                            f"{timestamp_text}",
+                            file=sys.stderr
+                        )
+                        continue
 
                     events.append({
                         "ip": ip,
@@ -113,14 +120,25 @@ def parse_apache(files):
 
     for file in files:
         with open(file) as f:
-            for line in f:
+            for line_number, line in enumerate(f, start=1):
                 match = re.search(pattern, line)
 
                 if match:
-                    timestamp = datetime.strptime(
-                        match.group(2),
-                        "%d/%b/%Y:%H:%M:%S %z"
-                    )
+                    timestamp_text = match.group(2)
+
+                    try:
+                        timestamp = datetime.strptime(
+                            timestamp_text,
+                            "%d/%b/%Y:%H:%M:%S %z"
+                        )
+                    except ValueError:
+                        print(
+                            f"[!] Skipping invalid Apache timestamp "
+                            f"in {file} at line {line_number}: "
+                            f"{timestamp_text}",
+                            file=sys.stderr
+                        )
+                        continue
 
                     data.append([
                         match.group(1),
