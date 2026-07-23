@@ -1,6 +1,5 @@
 import unittest
 from datetime import datetime, timedelta
-from unittest.mock import patch
 
 from analyzer import detect_bruteforce
 
@@ -22,24 +21,21 @@ class TestSSHBruteforceWindow(unittest.TestCase):
     def test_detects_three_attempts_within_60_seconds(self):
         events = self.events_at(0, 20, 40)
 
-        with patch("analyzer.BF_LIMIT", 3):
-            result = detect_bruteforce(events)
+        result = detect_bruteforce(events, limit=3)
 
         self.assertEqual(result, [(self.ip, 3)])
 
     def test_ignores_attempts_spread_beyond_window(self):
         events = self.events_at(0, 61, 122)
 
-        with patch("analyzer.BF_LIMIT", 3):
-            result = detect_bruteforce(events)
+        result = detect_bruteforce(events, limit=3)
 
         self.assertEqual(result, [])
 
     def test_includes_attempt_exactly_at_60_second_boundary(self):
         events = self.events_at(0, 30, 60)
 
-        with patch("analyzer.BF_LIMIT", 3):
-            result = detect_bruteforce(events)
+        result = detect_bruteforce(events, limit=3)
 
         self.assertEqual(result, [(self.ip, 3)])
 
