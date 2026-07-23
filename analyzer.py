@@ -10,12 +10,61 @@ from datetime import datetime
 from pathlib import Path 
 
 # Configuration setup
-with open("config.json") as f:
-    config = json.load(f)
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().with_name("config.json")
 
-LOGS_DIR = config.get("logs_dir", "logs")
-BF_LIMIT = config["bruteforce_limit"]
-DOS_LIMIT = config["dos_limit"]
+
+class ConfigError(Exception):
+    """Raised when analyzer configuration is unusable."""
+
+
+def load_config(path):
+    config_path = Path(path)
+
+    try:
+        with config_path.open(encoding="utf-8") as file:
+            config = json.load(file)
+    except FileNotFoundError:
+        raise ConfigError(
+            f"Configuration file not found: {config_path}"
+        ) from None
+    except json.JSONDecodeError as error:
+        raise ConfigError(
+            f"Invalid JSON in configuration file {config_path} "
+            f"at line {error.lineno}, column {error.colno}"
+        ) from None
+    except OSError as error:
+        raise ConfigError(
+            f"Unable to read configuration file {config_path}: {error}"
+        ) from None
+
+    if not isinstance(config, dict):
+        raise ConfigError("Configuration must contain a JSON object")
+
+    limits = {}
+
+    for key in ("bruteforce_limit", "dos_limit"):
+        value = config.get(key)
+
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ConfigError(f"'{key}' must be a positive integer")
+
+        limits[key] = value
+
+    logs_dir = config.get("logs_dir", "logs")
+
+    if not isinstance(logs_dir, str) or not logs_dir.strip():
+        raise ConfigError("'logs_dir' must be a non-empty string")
+
+    logs_path = Path(logs_dir)
+
+    if not logs_path.is_absolute():
+        logs_path = config_path.resolve().parent / logs_path
+
+    return {
+        "logs_dir": logs_path,
+        "bruteforce_limit": limits["bruteforce_limit"],
+        "dos_limit": limits["dos_limit"],
+    }
 
 # ---------------- COMMAND LINE INTERFACE ----------------
 
@@ -28,6 +77,7 @@ def parse_args():
     parser.add_argument("--ssh", metavar="FILE", help="Force treat as SSH log")
     parser.add_argument("--apache", metavar="FILE", help="Force treat as Apache log")
     parser.add_argument("--no-graph", action="store_true", help="Skip graph generation")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Path to the JSON configuration file",)
     return parser.parse_args()
 
 # ---------------- LOG DISCOVERY ----------------
@@ -50,9 +100,9 @@ def find_logs(logs_dir):
 
     return apache_files, ssh_files
 
-def resolve_files(args):
+def resolve_files(args, logs_dir):
     if not args.files and not args.ssh and not args.apache:
-        return find_logs(LOGS_DIR)
+        return find_logs(logs_dir)
 
     apache_files, ssh_files = [], []
     if args.apache:
@@ -64,7 +114,8 @@ def resolve_files(args):
 
     for fname in args.files:
         p = Path(fname)
-        if not p.exists(): p = Path(LOGS_DIR) / fname
+        if not p.exists():
+            p = Path(logs_dir) / fname
         if not p.exists(): continue
 
         name = p.name.lower()
@@ -151,25 +202,18 @@ def parse_apache(files):
 
 # ---------------- DETECTION ENGINES ----------------
 
-def detect_bruteforce(events, window_seconds=60):
+def detect_bruteforce(events, limit, window_seconds=60):
     events_by_ip = {}
 
-    # Group timestamps by IP address
     for event in events:
         ip = event["ip"]
         timestamp = event["time"]
-
-        if ip not in events_by_ip:
-            events_by_ip[ip] = []
-
-        events_by_ip[ip].append(timestamp)
+        events_by_ip.setdefault(ip, []).append(timestamp)
 
     alerts = []
 
-    # Examine each IP separately
     for ip, timestamps in events_by_ip.items():
         timestamps.sort()
-
         window_start = 0
         max_attempts = 0
 
@@ -182,28 +226,25 @@ def detect_bruteforce(events, window_seconds=60):
             attempts_in_window = window_end - window_start + 1
             max_attempts = max(max_attempts, attempts_in_window)
 
-        if max_attempts >= BF_LIMIT:
+        if max_attempts >= limit:
             alerts.append((ip, max_attempts))
 
     return alerts
 
-def detect_dos(data, window_seconds=60):
+
+def detect_dos(data, limit, window_seconds=60):
     if not data:
         return pd.Series(dtype=int)
 
     timestamps_by_ip = {}
 
     for ip, timestamp, request, status in data:
-        if ip not in timestamps_by_ip:
-            timestamps_by_ip[ip] = []
-
-        timestamps_by_ip[ip].append(timestamp)
+        timestamps_by_ip.setdefault(ip, []).append(timestamp)
 
     alerts = {}
 
     for ip, timestamps in timestamps_by_ip.items():
         timestamps.sort()
-
         window_start = 0
         max_requests = 0
 
@@ -216,7 +257,7 @@ def detect_dos(data, window_seconds=60):
             requests_in_window = window_end - window_start + 1
             max_requests = max(max_requests, requests_in_window)
 
-        if max_requests >= DOS_LIMIT:
+        if max_requests >= limit:
             alerts[ip] = max_requests
 
     return pd.Series(alerts, dtype=int).sort_values(ascending=False)
@@ -277,15 +318,29 @@ def save_report(bf, dos, bad):
 def main():
     args = parse_args()
 
-    apache_files, ssh_files = resolve_files(args)
+    try:
+        config = load_config(args.config)
+    except ConfigError as error:
+        print(f"[!] {error}", file=sys.stderr)
+        return 2
+
+    apache_files, ssh_files = resolve_files(
+        args,
+        config["logs_dir"],
+    )
 
     apache_data = parse_apache(apache_files)
     ssh_data = parse_ssh(ssh_files)
 
-    bf_alerts = detect_bruteforce(ssh_data)
-    dos_alerts = detect_dos(apache_data)
+    bf_alerts = detect_bruteforce(
+        ssh_data,
+        config["bruteforce_limit"],
+    )
+    dos_alerts = detect_dos(
+        apache_data,
+        config["dos_limit"],
+    )
 
-    # Extract plain IP strings before blacklist checking
     ssh_ips = [event["ip"] for event in ssh_data]
     apache_ips = [row[0] for row in apache_data]
     all_seen_ips = ssh_ips + apache_ips
@@ -301,15 +356,17 @@ def main():
             apache_data,
             blacklist,
             bf_ips,
-            dos_ips
+            dos_ips,
         )
 
     save_report(
         bf_alerts,
         dos_alerts,
-        blacklisted_found
+        blacklisted_found,
     )
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
