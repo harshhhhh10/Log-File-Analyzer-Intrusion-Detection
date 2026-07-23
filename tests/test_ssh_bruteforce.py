@@ -18,12 +18,27 @@ class TestSSHBruteforceWindow(unittest.TestCase):
             for offset in second_offsets
         ]
 
+    def expected_alert(self, count, start_offset, end_offset):
+        return {
+            "ip": self.ip,
+            "count": count,
+            "window_start": self.start
+            + timedelta(seconds=start_offset),
+            "window_end": self.start
+            + timedelta(seconds=end_offset),
+            "threshold": 3,
+            "window_seconds": 60,
+        }
+
     def test_detects_three_attempts_within_60_seconds(self):
         events = self.events_at(0, 20, 40)
 
         result = detect_bruteforce(events, limit=3)
 
-        self.assertEqual(result, [(self.ip, 3)])
+        self.assertEqual(
+            result,
+            [self.expected_alert(3, 0, 40)],
+        )
 
     def test_ignores_attempts_spread_beyond_window(self):
         events = self.events_at(0, 61, 122)
@@ -37,7 +52,20 @@ class TestSSHBruteforceWindow(unittest.TestCase):
 
         result = detect_bruteforce(events, limit=3)
 
-        self.assertEqual(result, [(self.ip, 3)])
+        self.assertEqual(
+            result,
+            [self.expected_alert(3, 0, 60)],
+        )
+
+    def test_reports_actual_peak_window(self):
+        events = self.events_at(0, 50, 120, 130, 140)
+
+        result = detect_bruteforce(events, limit=3)
+
+        self.assertEqual(
+            result,
+            [self.expected_alert(3, 120, 140)],
+        )
 
 
 if __name__ == "__main__":
