@@ -202,65 +202,95 @@ def parse_apache(files):
 
 # ---------------- DETECTION ENGINES ----------------
 
+
+def find_peak_window(timestamps, window_seconds):
+    ordered_timestamps = sorted(timestamps)
+
+    if not ordered_timestamps:
+        return None
+
+    window_start = 0
+    peak_start = 0
+    peak_end = 0
+    peak_count = 0
+
+    for window_end in range(len(ordered_timestamps)):
+        while (
+            ordered_timestamps[window_end]
+            - ordered_timestamps[window_start]
+        ).total_seconds() > window_seconds:
+            window_start += 1
+
+        count = window_end - window_start + 1
+
+        if count > peak_count:
+            peak_count = count
+            peak_start = window_start
+            peak_end = window_end
+
+    return {
+        "count": peak_count,
+        "window_start": ordered_timestamps[peak_start],
+        "window_end": ordered_timestamps[peak_end],
+    }
+
+
 def detect_bruteforce(events, limit, window_seconds=60):
     events_by_ip = {}
 
     for event in events:
-        ip = event["ip"]
-        timestamp = event["time"]
-        events_by_ip.setdefault(ip, []).append(timestamp)
+        events_by_ip.setdefault(event["ip"], []).append(event["time"])
 
     alerts = []
 
     for ip, timestamps in events_by_ip.items():
-        timestamps.sort()
-        window_start = 0
-        max_attempts = 0
+        peak = find_peak_window(timestamps, window_seconds)
 
-        for window_end in range(len(timestamps)):
-            while (
-                timestamps[window_end] - timestamps[window_start]
-            ).total_seconds() > window_seconds:
-                window_start += 1
+        if peak["count"] >= limit:
+            alerts.append(
+                {
+                    "ip": ip,
+                    "count": peak["count"],
+                    "window_start": peak["window_start"],
+                    "window_end": peak["window_end"],
+                    "threshold": limit,
+                    "window_seconds": window_seconds,
+                }
+            )
 
-            attempts_in_window = window_end - window_start + 1
-            max_attempts = max(max_attempts, attempts_in_window)
-
-        if max_attempts >= limit:
-            alerts.append((ip, max_attempts))
-
-    return alerts
+    return sorted(
+        alerts,
+        key=lambda alert: (-alert["count"], alert["ip"]),
+    )
 
 
 def detect_dos(data, limit, window_seconds=60):
-    if not data:
-        return pd.Series(dtype=int)
-
     timestamps_by_ip = {}
 
     for ip, timestamp, request, status in data:
         timestamps_by_ip.setdefault(ip, []).append(timestamp)
 
-    alerts = {}
+    alerts = []
 
     for ip, timestamps in timestamps_by_ip.items():
-        timestamps.sort()
-        window_start = 0
-        max_requests = 0
+        peak = find_peak_window(timestamps, window_seconds)
 
-        for window_end in range(len(timestamps)):
-            while (
-                timestamps[window_end] - timestamps[window_start]
-            ).total_seconds() > window_seconds:
-                window_start += 1
+        if peak["count"] >= limit:
+            alerts.append(
+                {
+                    "ip": ip,
+                    "count": peak["count"],
+                    "window_start": peak["window_start"],
+                    "window_end": peak["window_end"],
+                    "threshold": limit,
+                    "window_seconds": window_seconds,
+                }
+            )
 
-            requests_in_window = window_end - window_start + 1
-            max_requests = max(max_requests, requests_in_window)
-
-        if max_requests >= limit:
-            alerts[ip] = max_requests
-
-    return pd.Series(alerts, dtype=int).sort_values(ascending=False)
+    return sorted(
+        alerts,
+        key=lambda alert: (-alert["count"], alert["ip"]),
+    )
 
 # ---------------- THREAT INTELLIGENCE ----------------
 
@@ -295,24 +325,53 @@ def plot_ips(data, blacklist=set(), bf_ips=set(), dos_ips=set()):
 
 # ---------------- REPORTING ----------------
 
+def format_alert(alert, activity):
+    return (
+        f"  {alert['ip']} -> {alert['count']} {activity}; "
+        f"window {alert['window_start'].isoformat()} "
+        f"to {alert['window_end'].isoformat()} "
+        f"(threshold {alert['threshold']} "
+        f"in {alert['window_seconds']}s)"
+    )
+
+
 def save_report(bf, dos, bad):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    output = [f"{'='*40}\n Intrusion Detection Report\n {timestamp}\n{'='*40}"]
+    output = [
+        f"{'=' * 40}\n"
+        f" Intrusion Detection Report\n"
+        f" {timestamp}\n"
+        f"{'=' * 40}"
+    ]
 
     output.append("\n[Brute Force - SSH]")
-    output.extend([f"  {ip} -> {n} attempts" for ip, n in bf] if bf else ["  no alerts"])
+    output.extend(
+        [format_alert(alert, "attempts") for alert in bf]
+        if bf
+        else ["  no alerts"]
+    )
 
     output.append("\n[DoS Pattern - Apache]")
-    output.extend([f"  {ip} -> {n} requests" for ip, n in dos.items()] if not dos.empty else ["  no alerts"])
+    output.extend(
+        [format_alert(alert, "requests") for alert in dos]
+        if dos
+        else ["  no alerts"]
+    )
 
     output.append("\n[Blacklisted IPs]")
-    output.extend([f"  {ip}" for ip in bad] if bad else ["  none found"])
+    output.extend(
+        [f"  {ip}" for ip in bad]
+        if bad
+        else ["  none found"]
+    )
 
     report_content = "\n".join(output)
-    with open("report.txt", "w") as f:
-        f.write(report_content)
-    print(report_content)
 
+    with open("report.txt", "w") as file:
+        file.write(report_content)
+
+    print(report_content)
+    
 # ---------------- EXECUTION ----------------
 
 def main():
@@ -349,8 +408,8 @@ def main():
     blacklisted_found = check_blacklist(all_seen_ips, blacklist)
 
     if not args.no_graph:
-        bf_ips = {ip for ip, attempts in bf_alerts}
-        dos_ips = set(dos_alerts.index)
+        bf_ips = {alert["ip"] for alert in bf_alerts}
+        dos_ips = {alert["ip"] for alert in dos_alerts}
 
         plot_ips(
             apache_data,
