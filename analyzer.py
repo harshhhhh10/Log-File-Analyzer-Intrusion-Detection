@@ -202,7 +202,6 @@ def parse_apache(files):
 
 # ---------------- DETECTION ENGINES ----------------
 
-# ---------------- DETECTION ENGINES ----------------
 
 def find_peak_window(timestamps, window_seconds):
     ordered_timestamps = sorted(timestamps)
