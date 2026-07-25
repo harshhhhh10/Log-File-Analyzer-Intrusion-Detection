@@ -4,9 +4,8 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
-
+from matplotlib import pyplot as plt
 from matplotlib.colors import to_hex
-
 from analyzer import plot_ips
 
 
@@ -64,11 +63,10 @@ class TestGraphGeneration(unittest.TestCase):
             + self.apache_rows("192.0.2.40", 1)
         )
         captured = {}
+        original_subplots = plt.subplots
 
         def capture_subplots(*args, **kwargs):
-            from matplotlib import pyplot as plt
-
-            figure, axes = plt.subplots(*args, **kwargs)
+            figure, axes = original_subplots(*args, **kwargs)
             captured["axes"] = axes
             return figure, axes
 
