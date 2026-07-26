@@ -303,25 +303,96 @@ def check_blacklist(ip_list, blacklist):
 
 # ---------------- VISUALIZATION ----------------
 
-def plot_ips(data, blacklist=set(), bf_ips=set(), dos_ips=set()):
-    if not data: return
-    Path("graphs").mkdir(exist_ok=True)
+def plot_event_overview(apache_data, ssh_data, blacklist=None, bf_ips=None, dos_ips=None):
+    """Create one source-aware chart for all successfully parsed events.
 
-    df = pd.DataFrame(data, columns=["ip", "time", "req", "status"])
-    counts = df["ip"].value_counts().head(10)
-    colors = ["#c0392b" if ip in blacklist else "#e67e22" if (ip in bf_ips or ip in dos_ips) else "#2980b9" for ip in counts.index]
+    Apache rows and SSH failed-login events use different fields, so the chart
+    first normalizes them to ``(source_ip, event_type)`` pairs. Future parsers
+    can join this overview by supplying the same two pieces of information.
+    """
+    blacklist = blacklist or set()
+    bf_ips = bf_ips or set()
+    dos_ips = dos_ips or set()
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    events = [
+        (ip, "HTTP request")
+        for ip, _timestamp, _request, _status in apache_data
+    ]
+    events.extend(
+        (event["ip"], "Failed SSH login")
+        for event in ssh_data
+    )
+
+    if not events:
+        return False
+
+    event_frame = pd.DataFrame(events, columns=["ip", "event_type"])
+    source_counts = event_frame["ip"].value_counts().head(10)
+    type_counts = event_frame["event_type"].value_counts()
+
+    source_colors = [
+        "#c0392b" if ip in blacklist
+        else "#e67e22" if ip in (bf_ips | dos_ips)
+        else "#2980b9"
+        for ip in source_counts.index
+    ]
+    type_colors = {
+        "HTTP request": "#2980b9",
+        "Failed SSH login": "#8e44ad",
+    }
+
+    fig, (source_ax, type_ax) = plt.subplots(1, 2, figsize=(14, 6))
     fig.patch.set_facecolor("#1a1a2e")
-    ax.set_facecolor("#16213e")
-    ax.bar(counts.index, counts.values, color=colors)
 
-    ax.set_title("Top IP Access Count", color="white", fontweight="bold")
-    ax.tick_params(colors="white")
-    plt.xticks(rotation=30, ha="right")
-    plt.tight_layout()
-    plt.savefig("graphs/access.png", facecolor=fig.get_facecolor())
-    plt.close()
+    for axis in (source_ax, type_ax):
+        axis.set_facecolor("#16213e")
+        axis.tick_params(colors="white")
+        for spine in axis.spines.values():
+            spine.set_color("#aab2bd")
+
+    source_ax.bar(source_counts.index, source_counts.values, color=source_colors)
+    source_ax.set_title("Top Source IPs", color="white", fontweight="bold")
+    source_ax.set_ylabel("Parsed events", color="white")
+    source_ax.tick_params(axis="x", rotation=30)
+    source_ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+
+    type_ax.bar(
+        type_counts.index,
+        type_counts.values,
+        color=[type_colors.get(event_type, "#16a085") for event_type in type_counts.index],
+    )
+    type_ax.set_title("Parsed Events by Type", color="white", fontweight="bold")
+    type_ax.set_ylabel("Event count", color="white")
+    type_ax.tick_params(axis="x", rotation=20)
+    type_ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+
+    source_ax.legend(
+        handles=[
+            mpatches.Patch(color="#c0392b", label="Blacklisted IP"),
+            mpatches.Patch(color="#e67e22", label="Detection source"),
+            mpatches.Patch(color="#2980b9", label="Observed source"),
+        ],
+        facecolor="#16213e",
+        edgecolor="#aab2bd",
+        labelcolor="white",
+        loc="upper right",
+    )
+    fig.suptitle("Log Event Overview", color="white", fontweight="bold", fontsize=16)
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+
+    output_directory = Path("graphs")
+    output_directory.mkdir(exist_ok=True)
+    fig.savefig(
+        output_directory / "event-overview.png",
+        facecolor=fig.get_facecolor(),
+    )
+    plt.close(fig)
+    return True
+
+
+def plot_ips(data, blacklist=None, bf_ips=None, dos_ips=None):
+    """Backward-compatible wrapper for callers using the old graph helper."""
+    return plot_event_overview(data, [], blacklist, bf_ips, dos_ips)
 
 # ---------------- REPORTING ----------------
 
@@ -411,12 +482,18 @@ def main():
         bf_ips = {alert["ip"] for alert in bf_alerts}
         dos_ips = {alert["ip"] for alert in dos_alerts}
 
-        plot_ips(
+        graph_created = plot_event_overview(
             apache_data,
+            ssh_data,
             blacklist,
             bf_ips,
             dos_ips,
         )
+        if not graph_created:
+            print(
+                "[i] No parsed events found; graph was not generated.",
+                file=sys.stderr,
+            )
 
     save_report(
         bf_alerts,
