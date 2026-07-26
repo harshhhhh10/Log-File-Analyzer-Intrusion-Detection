@@ -2,8 +2,6 @@
 
 A Python command-line tool that analyzes Apache and SSH logs for suspicious activity, including SSH brute-force attempts, Apache request bursts, and connections from blacklisted IP addresses.
 
-Built during my internship at Elevate Labs.
-
 ## Features
 
 - Parses Apache access logs and OpenSSH failed-password events
@@ -12,7 +10,7 @@ Built during my internship at Elevate Labs.
 - Reports the actual peak activity window for each detection
 - Checks IP addresses from both SSH and Apache logs against a local blacklist
 - Skips malformed timestamps without discarding other valid log entries
-- Generates a color-coded chart of the top Apache client IPs
+- Generates a color-coded event overview for every supported parsed log type
 - Writes a timestamped incident report
 - Supports custom configuration files
 - Includes automated tests through GitHub Actions
@@ -56,13 +54,13 @@ Invalid timestamps are reported to standard error and skipped. Other valid entri
 │   └── ssh.log             # Sample SSH log
 ├── tests/                  # Automated test suite
 ├── graphs/
-│   └── access.png          # Generated Apache traffic chart
+│   └── event-overview.png  # Generated event overview chart
 └── report.txt              # Generated incident report
 ```
 
-`report.txt` and `graphs/access.png` are generated at runtime and overwritten by later runs.
+`report.txt` and `graphs/event-overview.png` are generated at runtime and overwritten by later runs.
 
-The graph represents Apache traffic only. SSH detections appear in the report but are not plotted unless the same IP also appears in the Apache data.
+The graph is generated from all successfully parsed supported log events. An SSH-only scan shows failed SSH login events; an Apache-only scan shows HTTP requests; a combined scan shows both. Unknown formats need a parser before they can be included.
 
 ## Installation
 
@@ -200,19 +198,22 @@ Example:
 
 The SSH parser uses the fixed year `2000` because traditional syslog timestamps do not include a year.
 
-### Traffic chart
+### Event overview chart
 
-When Apache data is available, the analyzer writes:
+When at least one supported log event is parsed, the analyzer writes:
 
 ```text
-graphs/access.png
+graphs/event-overview.png
 ```
 
-The chart displays the ten most active Apache IP addresses:
+The chart displays:
+
+- The ten most active source IPs across the scanned supported logs
+- Parsed event counts by type, such as `HTTP request` and `Failed SSH login`
 
 - Red — blacklisted IP
-- Orange — IP that triggered a detection
-- Blue — other observed IP
+- Orange — source IP that triggered a detection
+- Blue — other observed source IP
 
 Use `--no-graph` when only the text report is required.
 
@@ -249,7 +250,7 @@ GitHub Actions runs the same test suite for pull requests targeting `main` and p
 - Uses filename keywords for automatic log-type detection
 - SSH syslog entries are assigned the year `2000`
 - Threshold alerts indicate suspicious volume, not confirmed malicious intent
-- The chart visualizes Apache traffic only
+- The chart visualizes every successfully parsed supported log type
 - Generated reports and charts are overwritten by subsequent runs
 
 ## Legal and Ethical Use
