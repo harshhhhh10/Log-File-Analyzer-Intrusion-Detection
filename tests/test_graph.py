@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 from matplotlib import pyplot as plt
 from matplotlib.colors import to_hex
-from analyzer import plot_ips
+from analyzer import plot_event_overview
 
 
 class TestGraphGeneration(unittest.TestCase):
@@ -40,20 +40,40 @@ class TestGraphGeneration(unittest.TestCase):
             for _ in range(count)
         ]
 
-    def test_skips_graph_when_apache_data_is_empty(self):
-        plot_ips([])
+    def ssh_events(self, ip, count):
+        return [
+            {
+                "ip": ip,
+                "time": self.timestamp,
+            }
+            for _ in range(count)
+        ]
 
+    def test_skips_graph_when_no_parsed_events_exist(self):
+        created = plot_event_overview([], [])
+
+        self.assertFalse(created)
         self.assertFalse(Path("graphs").exists())
 
-    def test_creates_non_empty_graph_file(self):
+    def test_creates_non_empty_graph_file_for_apache_events(self):
         data = self.apache_rows("198.51.100.10", 3)
 
-        plot_ips(data)
+        created = plot_event_overview(data, [])
 
-        graph = Path("graphs/access.png")
+        graph = Path("graphs/event-overview.png")
 
         self.assertTrue(graph.is_file())
         self.assertGreater(graph.stat().st_size, 0)
+        self.assertTrue(created)
+
+    def test_creates_graph_for_ssh_only_events(self):
+        created = plot_event_overview(
+            [],
+            self.ssh_events("198.51.100.10", 3),
+        )
+
+        self.assertTrue(created)
+        self.assertTrue(Path("graphs/event-overview.png").is_file())
 
     def test_applies_blacklist_detection_and_default_colors(self):
         data = (
@@ -74,8 +94,9 @@ class TestGraphGeneration(unittest.TestCase):
             "analyzer.plt.subplots",
             side_effect=capture_subplots,
         ):
-            plot_ips(
+            plot_event_overview(
                 data,
+                [],
                 blacklist={"198.51.100.10"},
                 bf_ips={"203.0.113.20"},
                 dos_ips={"192.0.2.30"},
@@ -83,7 +104,7 @@ class TestGraphGeneration(unittest.TestCase):
 
         colors = [
             to_hex(bar.get_facecolor())
-            for bar in captured["axes"].patches
+            for bar in captured["axes"][0].patches
         ]
 
         self.assertEqual(
@@ -95,6 +116,30 @@ class TestGraphGeneration(unittest.TestCase):
                 "#2980b9",
             ],
         )
+
+    def test_includes_apache_and_ssh_event_types(self):
+        captured = {}
+        original_subplots = plt.subplots
+
+        def capture_subplots(*args, **kwargs):
+            figure, axes = original_subplots(*args, **kwargs)
+            captured["axes"] = axes
+            return figure, axes
+
+        with patch(
+            "analyzer.plt.subplots",
+            side_effect=capture_subplots,
+        ):
+            plot_event_overview(
+                self.apache_rows("203.0.113.20", 2),
+                self.ssh_events("198.51.100.10", 3),
+            )
+
+        labels = [
+            tick.get_text()
+            for tick in captured["axes"][1].get_xticklabels()
+        ]
+        self.assertEqual(labels, ["Failed SSH login", "HTTP request"])
 
 
 if __name__ == "__main__":
