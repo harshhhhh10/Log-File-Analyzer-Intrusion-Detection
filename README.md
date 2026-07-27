@@ -2,7 +2,7 @@
 
 A Python command-line tool that analyzes Apache and SSH logs for suspicious activity, including SSH brute-force attempts, Apache request bursts, and connections from blacklisted IP addresses.
 
-Built during my internship at Elevate Labs.
+
 
 ## Features
 
