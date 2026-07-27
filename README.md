@@ -2,6 +2,8 @@
 
 A Python command-line tool that analyzes Apache and SSH logs for suspicious activity, including SSH brute-force attempts, Apache request bursts, and connections from blacklisted IP addresses.
 
+
+
 ## Features
 
 - Parses Apache access logs and OpenSSH failed-password events
@@ -10,7 +12,7 @@ A Python command-line tool that analyzes Apache and SSH logs for suspicious acti
 - Reports the actual peak activity window for each detection
 - Checks IP addresses from both SSH and Apache logs against a local blacklist
 - Skips malformed timestamps without discarding other valid log entries
-- Generates a color-coded event overview for every supported parsed log type
+- Generates a color-coded event overview and a filterable local dashboard
 - Writes a timestamped incident report
 - Supports custom configuration files
 - Includes automated tests through GitHub Actions
@@ -55,10 +57,11 @@ Invalid timestamps are reported to standard error and skipped. Other valid entri
 ├── tests/                  # Automated test suite
 ├── graphs/
 │   └── event-overview.png  # Generated event overview chart
+│   └── dashboard.html      # Generated local analyst dashboard
 └── report.txt              # Generated incident report
 ```
 
-`report.txt` and `graphs/event-overview.png` are generated at runtime and overwritten by later runs.
+`report.txt`, `graphs/event-overview.png`, and `graphs/dashboard.html` are generated at runtime and overwritten by later runs.
 
 The graph is generated from all successfully parsed supported log events. An SSH-only scan shows failed SSH login events; an Apache-only scan shows HTTP requests; a combined scan shows both. Unknown formats need a parser before they can be included.
 
@@ -217,6 +220,25 @@ The chart displays:
 
 Use `--no-graph` when only the text report is required.
 
+### Local dashboard
+
+When at least one supported log event is parsed, the analyzer also writes:
+
+```text
+graphs/dashboard.html
+```
+
+Open the file in a browser. It is self-contained and does not need a web server or an internet connection.
+
+The dashboard includes:
+
+- Summary cards for parsed events, SSH alerts, Apache alerts, and blacklist matches
+- Filters for all events, SSH events, Apache events, and suspicious sources only
+- Top source IPs, parsed event types, and busiest event minutes
+- A detection-evidence table with IP, peak window, threshold, and blacklist status
+
+The dashboard summarizes parsed activity and threshold alerts; it does not confirm that an IP address is malicious.
+
 ## Running the Tests
 
 Run the complete test suite with:
@@ -228,7 +250,7 @@ python -m unittest discover -s tests -v
 Current expected result:
 
 ```text
-Ran 32 tests
+Ran 36 tests
 OK
 ```
 
@@ -251,7 +273,7 @@ GitHub Actions runs the same test suite for pull requests targeting `main` and p
 - SSH syslog entries are assigned the year `2000`
 - Threshold alerts indicate suspicious volume, not confirmed malicious intent
 - The chart visualizes every successfully parsed supported log type
-- Generated reports and charts are overwritten by subsequent runs
+- Generated reports, charts, and dashboard are overwritten by subsequent runs
 
 ## Legal and Ethical Use
 
