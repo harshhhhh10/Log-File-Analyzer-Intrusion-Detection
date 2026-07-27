@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 from matplotlib import pyplot as plt
 from matplotlib.colors import to_hex
-from analyzer import plot_event_overview
+from analyzer import plot_event_overview, write_dashboard
 
 
 class TestGraphGeneration(unittest.TestCase):
@@ -140,6 +140,40 @@ class TestGraphGeneration(unittest.TestCase):
             for tick in captured["axes"][1].get_xticklabels()
         ]
         self.assertEqual(labels, ["Failed SSH login", "HTTP request"])
+
+    def test_creates_filterable_dashboard_for_ssh_events(self):
+        ssh_events = self.ssh_events("198.51.100.10", 3)
+        alerts = [
+            {
+                "ip": "198.51.100.10",
+                "count": 3,
+                "window_start": self.timestamp,
+                "window_end": self.timestamp,
+                "threshold": 3,
+                "window_seconds": 60,
+            }
+        ]
+
+        created = write_dashboard(
+            [],
+            ssh_events,
+            alerts,
+            [],
+            {"198.51.100.10"},
+        )
+
+        dashboard = Path("graphs/dashboard.html")
+        self.assertTrue(created)
+        self.assertTrue(dashboard.is_file())
+
+        content = dashboard.read_text(encoding="utf-8")
+        self.assertIn("Log File Analyzer Dashboard", content)
+        self.assertIn("198.51.100.10", content)
+        self.assertIn('data-filter="suspicious"', content)
+
+    def test_skips_dashboard_when_no_parsed_events_exist(self):
+        self.assertFalse(write_dashboard([], [], [], [], set()))
+        self.assertFalse(Path("graphs/dashboard.html").exists())
 
 
 if __name__ == "__main__":
